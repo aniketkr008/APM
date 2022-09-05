@@ -28,6 +28,16 @@ from requests.exceptions import HTTPError, RequestException
 import jwt
 from flask import Flask, abort, jsonify, make_response, redirect, \
     render_template, request, url_for
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.propagate import set_global_textmap
+#from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+#from opentelemetry.propagators.cloud_trace_propagator import CloudTraceFormatPropagator
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.instrumentation.jinja2 import Jinja2Instrumentor
 
 
 # pylint: disable-msg=too-many-locals
@@ -565,10 +575,36 @@ def create_app():
     app.jinja_env.globals.update(format_timestamp_day=format_timestamp_day)
 
     # Set up logging
-    # app.logger.handlers = logging.getLogger('gunicorn.error').handlers
-    # app.logger.setLevel(logging.getLogger('gunicorn.error').level)
+    app.logger.handlers = logging.getLogger('gunicorn.error').handlers
+    app.logger.setLevel(logging.getLogger('gunicorn.error').level)
     app.logger.info('Starting frontend service.')
     app.logger.info("🚫 Tracing disabled.")
+    # Set up tracing and export spans to Cloud Trace.
+    if os.environ['ENABLE_TRACING'] == "true":
+        app.logger.info("✅ Tracing enabled.")
+#        trace.set_tracer_provider(TracerProvider())
+#        cloud_trace_exporter = CloudTraceSpanExporter()
+#        trace.get_tracer_provider().add_span_processor(
+#            BatchSpanProcessor(cloud_trace_exporter)
+#        )
+#        set_global_textmap(CloudTraceFormatPropagator())
+#        provider = TracerProvider()
+#        processor = BatchSpanProcessor(OTLPSpanExporter())
+#        provider.add_span_processor(processor)
+#        trace.set_tracer_provider(provider)
+
+        trace.set_tracer_provider(TracerProvider())
+        otlp_trace_exporter = OTLPSpanExporter()
+        trace.get_tracer_provider().add_span_processor(
+            BatchSpanProcessor(otlp_trace_exporter)
+        )
+
+        # Add tracing auto-instrumentation for Flask, jinja and requests
+        FlaskInstrumentor().instrument_app(app)
+        RequestsInstrumentor().instrument()
+        Jinja2Instrumentor().instrument()
+    else:
+        app.logger.info("🚫 Tracing disabled.")
 
     return app
 

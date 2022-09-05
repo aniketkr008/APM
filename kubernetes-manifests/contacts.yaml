@@ -17,6 +17,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: contacts
+  labels:
+    name: contacts
+  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:
@@ -28,16 +31,30 @@ spec:
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
       containers:
       - name: contacts
-        image: gcr.io/bank-of-anthos-ci/contacts:v0.5.5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - all
+          privileged: false
+          readOnlyRootFilesystem: true
+        image: ghcr.io/nishant-vunet/contacts:v0.5.6
         volumeMounts:
         - name: publickey
-          mountPath: "/root/.ssh"
+          mountPath: "/tmp/.ssh"
           readOnly: true
+        - mountPath: /tmp
+          name: tmp
         env:
         - name: VERSION
-          value: "v0.5.5"
+          value: "v0.5.6"
         - name: PORT
           value: "8080"
         - name: ENABLE_TRACING
@@ -46,6 +63,28 @@ spec:
         # If no valid level is set, will default to info.
         - name: LOG_LEVEL
           value: "info"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=contacts,service.version=0.5.6,application=BankOfAnthos,service.instance.id=$(POD_NAME),k8s.pod.uid=$(POD_UID)"
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
+        - name: OTEL_METRICS_EXPORTER
+          value: otlp
+        - name: OTEL_LOGS_EXPORTER
+          value: none
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.default:4317
+        - name: OTEL_LOG_LEVEL
+          value: debug
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "60000"
         envFrom:
         - configMapRef:
             name: environment-config
@@ -58,6 +97,13 @@ spec:
           limits:
             cpu: 250m
             memory: 128Mi
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 10
       volumes:
       - name: publickey
         secret:
@@ -65,6 +111,8 @@ spec:
           items:
           - key: jwtRS256.key.pub
             path: publickey
+      - emptyDir: {}
+        name: tmp
 # [END gke_boa_kubernetes_manifests_contacts_deployment_contacts]
 ---
 # [START gke_boa_kubernetes_manifests_contacts_service_contacts]

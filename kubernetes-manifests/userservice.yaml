@@ -17,6 +17,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: userservice
+  labels:
+    name: userservice
+  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:
@@ -28,19 +31,34 @@ spec:
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
       containers:
       - name: userservice
-        image: gcr.io/bank-of-anthos-ci/userservice:v0.5.5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - all
+          privileged: false
+          readOnlyRootFilesystem: true
+          #image: gcr.io/bank-of-anthos-ci/userservice:v0.5.6
+        image: ghcr.io/nishant-vunet/userservice:v0.5.6
         volumeMounts:
         - name: keys
-          mountPath: "/root/.ssh"
+          mountPath: "/tmp/.ssh"
           readOnly: true
+        - mountPath: /tmp
+          name: tmp
         ports:
         - name: http-server
           containerPort: 8080
         env:
         - name: VERSION
-          value: "v0.5.5"
+          value: "v0.5.6"
         - name: PORT
           value: "8080"
         - name: ENABLE_TRACING
@@ -48,15 +66,48 @@ spec:
         - name: TOKEN_EXPIRY_SECONDS
           value: "3600"
         - name: PRIV_KEY_PATH
-          value: "/root/.ssh/privatekey"
+          value: "/tmp/.ssh/privatekey"
         # Valid levels are debug, info, warning, error, critical. If no valid level is set, gunicorn will default to info.
         - name: LOG_LEVEL
           value: "info"
+        - name: HOST_IP
+          valueFrom:
+            fieldRef:
+               fieldPath: status.hostIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=userservice,service.version=0.5.6,application=BankOfAnthos,service.instance.id=$(POD_NAME),k8s.pod.uid=$(POD_UID)"
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
+        - name: OTEL_METRICS_EXPORTER
+          value: otlp
+        - name: OTEL_LOGS_EXPORTER
+          value: none
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.default:4317
+        - name: OTEL_LOG_LEVEL
+          value: debug
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "60000"
         envFrom:
         - configMapRef:
             name: environment-config
         - configMapRef:
             name: accounts-db-config
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 10
         resources:
           requests:
             cpu: 200m
@@ -73,6 +124,8 @@ spec:
             path: privatekey
           - key: jwtRS256.key.pub
             path: publickey
+      - emptyDir: {}
+        name: tmp
 # [END gke_boa_kubernetes_manifests_userservice_deployment_userservice]
 ---
 # [START gke_boa_kubernetes_manifests_userservice_service_userservice]

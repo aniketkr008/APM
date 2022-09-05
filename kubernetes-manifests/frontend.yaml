@@ -17,6 +17,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
+  labels:
+    name: frontend
+  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:
@@ -28,16 +31,31 @@ spec:
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
       containers:
       - name: front
-        image: gcr.io/bank-of-anthos-ci/frontend:v0.5.5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - all
+          privileged: false
+          readOnlyRootFilesystem: false
+          #image: gcr.io/bank-of-anthos-ci/frontend:v0.5.6
+        image: ghcr.io/nishant-vunet/frontend:v0.5.6
         volumeMounts:
         - name: publickey
-          mountPath: "/root/.ssh"
+          mountPath: "/tmp/.ssh"
           readOnly: true
+        - mountPath: /tmp
+          name: tmp
         env:
         - name: VERSION
-          value: "v0.5.5"
+          value: "v0.5.6"
         - name: PORT
           value: "8080"
         - name: ENABLE_TRACING
@@ -47,6 +65,28 @@ spec:
          # Valid levels are debug, info, warning, error, critical. If no valid level is set, gunicorn will default to info.
         - name: LOG_LEVEL
           value: "info"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=frontend-bank,service.version=0.5.6,application=BankOfAnthos,service.instance.id=$(POD_NAME),k8s.pod.uid=$(POD_UID)"
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
+        - name: OTEL_METRICS_EXPORTER
+          value: otlp
+        - name: OTEL_LOGS_EXPORTER
+          value: none
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.default:4317
+        - name: OTEL_LOG_LEVEL
+          value: debug
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "60000"
         # Set to "true" to enable the CymbalBank logo + title
         # - name: CYMBAL_LOGO
         #   value: "false"
@@ -66,6 +106,18 @@ spec:
             configMapKeyRef:
               name: demo-data-config
               key: DEMO_LOGIN_PASSWORD
+        - name: REGISTERED_OAUTH_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: oauth-config
+              key: DEMO_OAUTH_CLIENT_ID
+              optional: true
+        - name: ALLOWED_OAUTH_REDIRECT_URI
+          valueFrom:
+            configMapKeyRef:
+              name: oauth-config
+              key: DEMO_OAUTH_REDIRECT_URI
+              optional: true
         # Customize the metadata server hostname to query for metadata
         #- name: METADATA_SERVER
         #  value: "my-metadata-server"
@@ -77,6 +129,20 @@ spec:
             name: environment-config
         - configMapRef:
             name: service-api-config
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 30
         resources:
           requests:
             cpu: 100m
@@ -91,6 +157,8 @@ spec:
           items:
           - key: jwtRS256.key.pub
             path: publickey
+      - emptyDir: {}
+        name: tmp
 # [END gke_boa_kubernetes_manifests_frontend_deployment_frontend]
 ---
 # [START gke_boa_kubernetes_manifests_frontend_service_frontend]

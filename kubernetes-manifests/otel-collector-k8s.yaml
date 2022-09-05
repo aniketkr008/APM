@@ -1,0 +1,222 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-conf
+  labels:
+    app: opentelemetry
+    component: otel-collector-conf
+data:
+  otel-collector-config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+      fluentforward:
+        endpoint: 0.0.0.0:8006
+      hostmetrics:
+        collection_interval: 30s
+        scrapers:
+          cpu: {}
+          memory: {}
+          load: {}
+          disk: {}
+          filesystem: {}
+          network: {}        
+    processors:
+      batch:
+      memory_limiter:
+        # 80% of maximum memory up to 2G
+        limit_mib: 1500
+        # 25% of limit up to 2G
+        spike_limit_mib: 512
+        check_interval: 5s
+      resourcedetection:
+        detectors: [env]
+        timeout: 5s
+        override: false
+      k8sattributes:
+        auth_type: "serviceAccount"
+        passthrough: false
+        filter:
+          node_from_env_var: KUBE_NODE_NAME
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.deployment.name
+            - k8s.cluster.name
+            - k8s.namespace.name
+            - k8s.node.name
+            - k8s.pod.start_time
+        #pod_association:
+        # - from: resource_attribute
+        #   name: k8s.pod.uid
+        pod_association:
+         - sources:
+           - from: resource_attribute
+             name: k8s.pod.uid
+    extensions:
+      zpages: {}
+      memory_ballast:
+        # Memory Ballast size should be max 1/3 to 1/2 of memory.
+        size_mib: 683
+    exporters:
+      logging:
+        loglevel: debug
+      otlp:
+        endpoint: 10.16.0.4:9202
+        tls:
+          insecure: true
+      kafka:
+        brokers:
+          - 10.16.0.4:9092
+        topic: traces-input
+        protocol_version: 2.0.0
+        encoding: otlp_json
+      kafka/2:
+        brokers:
+          - 10.16.0.4:9092
+        topic: metrics-input
+        protocol_version: 2.0.0
+        encoding: otlp_json
+      kafka/3:
+        brokers:
+          - 10.16.0.4:9092
+        topic: logs-input
+        protocol_version: 2.0.0
+        encoding: otlp_json        
+      datadog:
+        api:
+          site: datadoghq.com
+          key: 72da1a9125dc20f5fafec5602860978d
+    service:
+      extensions: [zpages, memory_ballast]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch, k8sattributes]
+          exporters: [kafka,otlp, datadog]
+        logs:
+          receivers: [fluentforward]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/3]
+        metrics:
+          receivers: [otlp, hostmetrics]
+          # resourcedetection must come before k8sattributes
+          processors: [batch, resourcedetection, k8sattributes ]
+          exporters: [kafka/2]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels:
+    app: opentelemetry
+    component: otel-collector
+spec:
+  ports:
+  - name: forward
+    port: 8006
+    protocol: TCP
+    targetPort: 8006
+  - name: otlp-grpc # Default endpoint for OpenTelemetry gRPC receiver.
+    port: 4317
+    protocol: TCP
+    targetPort: 4317
+  - name: otlp-http # Default endpoint for OpenTelemetry HTTP receiver.
+    port: 4318
+    protocol: TCP
+    targetPort: 4318
+  - name: metrics # Default endpoint for querying metrics.
+    port: 8888
+  selector:
+    component: otel-collector
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-collector
+  labels:
+    app: opentelemetry
+    component: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: opentelemetry
+      component: otel-collector
+  minReadySeconds: 5
+  template:
+    metadata:
+      labels:
+        app: opentelemetry
+        component: otel-collector
+    spec:
+      containers:
+      - command:
+          - "/otelcol-contrib"
+          - "--config=/conf/otel-collector-config.yaml"
+        #image: otel/opentelemetry-collector:0.47.0
+        image: otel/opentelemetry-collector-contrib:latest 
+        name: otel-collector
+        resources:
+          limits:
+            cpu: 1
+            memory: 2Gi
+          requests:
+            cpu: 200m
+            memory: 400Mi
+        ports:
+        - containerPort: 55679 # Default endpoint for ZPages.
+        - containerPort: 4317 # Default endpoint for OpenTelemetry receiver.
+        - containerPort: 14250 # Default endpoint for Jaeger gRPC receiver.
+        - containerPort: 14268 # Default endpoint for Jaeger HTTP receiver.
+        - containerPort: 9411 # Default endpoint for Zipkin receiver.
+        - containerPort: 8888  # Default endpoint for querying metrics.
+        volumeMounts:
+        - name: otel-collector-config-vol
+          mountPath: /conf
+#        - name: otel-collector-secrets
+#          mountPath: /secrets
+      volumes:
+        - configMap:
+            name: otel-collector-conf
+            items:
+              - key: otel-collector-config
+                path: otel-collector-config.yaml
+          name: otel-collector-config-vol
+#        - secret:
+#            name: otel-collector-secrets
+#            items:
+#              - key: cert.pem
+#                path: cert.pem
+#              - key: key.pem
+#                path: key.pem
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opentelemetry-collector
+  #  namespace: open-telemetry
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector-role
+rules:
+- apiGroups: [""]
+  resources: ["pods","namespaces"]
+  verbs: ["watch", "watch","list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector-role-binding
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: otel-collector-role
+  apiGroup: rbac.authorization.k8s.io

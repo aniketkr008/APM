@@ -17,6 +17,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: transactionhistory
+  labels:
+    name: transactionhistory
+  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:
@@ -28,16 +31,31 @@ spec:
     spec:
       serviceAccountName: default
       terminationGracePeriodSeconds: 5
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
       containers:
       - name: transactionhistory
-        image: gcr.io/bank-of-anthos-ci/transactionhistory:v0.5.5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - all
+          privileged: false
+          readOnlyRootFilesystem: true
+          #        image: gcr.io/bank-of-anthos-ci/transactionhistory:v0.5.6
+        image: ghcr.io/nishant-vunet/transactionhistory:v0.5.6
         volumeMounts:
         - name: publickey
-          mountPath: "/root/.ssh"
+          mountPath: "/tmp/.ssh"
           readOnly: true
+        - mountPath: /tmp
+          name: tmp
         env:
         - name: VERSION
-          value: "v0.5.5"
+          value: "v0.5.6"
         - name: PORT
           value: "8080"
         - name: ENABLE_TRACING
@@ -65,6 +83,34 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: JAVA_TOOL_OPTIONS
+          value: "-javaagent:/usr/local/lib/opentelemetry-javaagent.jar -Dotel.instrumentation.runtime-metrics.enabled=true"
+        - name: HOST_IP
+          valueFrom:
+            fieldRef:
+               fieldPath: status.hostIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.name=transactionhistory,service.version=0.5.6,application=BankOfAnthos,service.instance.id=$(POD_NAME),k8s.pod.uid=$(POD_UID)"
+        - name: OTEL_TRACES_EXPORTER
+          value: otlp
+        - name: OTEL_METRICS_EXPORTER
+          value: otlp
+        - name: OTEL_LOGS_EXPORTER
+          value: none
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.default:4317
+        - name: OTEL_LOG_LEVEL
+          value: debug
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "60000"
         envFrom:
         - configMapRef:
             name: environment-config
@@ -82,6 +128,22 @@ spec:
           httpGet:
             path: /ready
             port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 5
+          timeoutSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthy
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 5
+          timeoutSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /healthy
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 10
       volumes:
       - name: publickey
         secret:
@@ -89,6 +151,8 @@ spec:
           items:
           - key: jwtRS256.key.pub
             path: publickey
+      - emptyDir: {}
+        name: tmp
 # [END gke_boa_kubernetes_manifests_transaction_history_deployment_transactionhistory]
 ---
 # [START gke_boa_kubernetes_manifests_transaction_history_service_transactionhistory]
