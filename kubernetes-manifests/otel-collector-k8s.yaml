@@ -86,26 +86,17 @@ data:
         topic: logs-input
         protocol_version: 2.0.0
         encoding: otlp_json        
-      datadog:
-        api:
-          site: datadoghq.com
-          key: 72da1a9125dc20f5fafec5602860978d
     service:
       extensions: [zpages, memory_ballast]
       pipelines:
         traces:
           receivers: [otlp]
           processors: [batch, k8sattributes]
-          exporters: [kafka,otlp, datadog]
+          exporters: [kafka,otlp]
         logs:
           receivers: [fluentforward]
           processors: [memory_limiter, batch]
           exporters: [kafka/3]
-        metrics:
-          receivers: [otlp, hostmetrics]
-          # resourcedetection must come before k8sattributes
-          processors: [batch, resourcedetection, k8sattributes ]
-          exporters: [kafka/2]
 ---
 apiVersion: v1
 kind: Service

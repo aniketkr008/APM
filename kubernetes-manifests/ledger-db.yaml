@@ -17,9 +17,6 @@ kind: StatefulSet
 apiVersion: apps/v1
 metadata:
   name: ledger-db
-  labels:
-    name: ledger-db
-  namespace: bank-of-anthos
 spec:
   serviceName: "ledger-db"
   replicas: 1

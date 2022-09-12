@@ -17,9 +17,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: contacts
-  labels:
-    name: contacts
-  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:

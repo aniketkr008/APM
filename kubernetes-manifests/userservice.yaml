@@ -17,9 +17,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: userservice
-  labels:
-    name: userservice
-  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:

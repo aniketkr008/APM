@@ -17,9 +17,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
-  labels:
-    name: frontend
-  namespace: bank-of-anthos
 spec:
   selector:
     matchLabels:
