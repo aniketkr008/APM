@@ -37,7 +37,7 @@ If you are using Bank of Anthos, please ★Star this repository to show your int
 1. **Clone this repository.**
 
 ```
-git clone https://github.com/vunetsystems/bank-of-anthos.git
+git clone https://github.com/nishant-vunet/bank-of-anthos.git
 cd bank-of-anthos/
 ```
 
